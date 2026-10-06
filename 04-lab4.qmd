@@ -12,15 +12,23 @@ Quarto enables you to weave together content and executable code into a finished
 
 When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
 
-```{r}
-1 + 1
-```
-
-You can add options to executable code like this
+# code chunk to read metadata table
 
 ```{r}
-#| echo: false
-2 * 2
+meta_data <- read.table(
+  system.file("extdata/param/targetsPE.txt", package="systemPipeRdata"), 
+  header = TRUE)
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+# output interactive table
+
+```{r}
+library(DT)
+datatable(meta_data, 
+          options = list(
+            pagelength = 6, 
+            scrollX = TRUE, 
+            autoWidth = TRUE
+          ),
+          caption = 'Table1: Updated Metadata Table')
+```
