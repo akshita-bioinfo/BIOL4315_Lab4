@@ -18,6 +18,8 @@ lapply(c(
   "tidyr", "stringr", "Rqc", "QuasR", "ape", "clusterProfiler", "biomaRt", "EnhancedVolcano", "org.At.tair.db"
 ), require, character.only = TRUE)
 
+
+# ACCESSING RNAseq DATA AND SAMPLE DATA                    
 # e.g.1 get the path 
 fq_path <- systemPipeRdata::pathList()$fastqdir
 
@@ -25,24 +27,15 @@ fq_path <- systemPipeRdata::pathList()$fastqdir
 fq_files <- list.files(fq_path)
 head(fq_files)
 
-
 # read the table
 meta_data <- read.table(
   system.file("extdata/param/targetsPE.txt", package="systemPipeRdata"), 
   header = TRUE)
 head(meta_data)
 
-# checking for path from package
-# actual_path <- systemPipeRdata::pathList()$fastqdir
-# actual_path <- paste0(system.file("extdata", package="systemPipeRdata"), "/")
-# print(actual_path)
-
-
-
 # code chunk to replace ./data/ with actual path
 meta_data$FileName1 <- gsub("./data/", fq_path, meta_data$FileName1, fixed = TRUE)
 meta_data$FileName2 <- gsub("./data/", fq_path, meta_data$FileName2, fixed = TRUE)
-
 # verify
 head(meta_data[, c("FileName1", "FileName2")])
 
@@ -56,7 +49,7 @@ datatable(meta_data,
           caption = 'Table1: Updated Metadata Table')
       
 
-# Generate 3 per-cycle Q-score box plots for files 1-12, 13-24, 25-36.
+# READ PROCESSING
 # consider pairs for all 36 files
 all_pairs <- rep(1:18, each = 2)
 
@@ -65,9 +58,10 @@ qc_results <- rqc(
   path = fq_path, 
   pattern = ".fastq.gz", 
   pair = all_pairs, 
-  openBrowser = FALSE)
+  openBrowser = FALSE,
+  outdir = "outputs")
 
-# Q-score box plots
+# Generate 3 per-cycle Q-score box plots for files 1-12, 13-24, 25-36.
 # plot1
 rqcCycleQualityBoxPlot(qc_results[1:12])
 
@@ -88,8 +82,11 @@ rqcCycleBaseCallsLinePlot(qc_results[13:24])
 rqcCycleBaseCallsLinePlot(qc_results[25:36])
 
 
+# QuasR TRIMMING
+# creating folder
 dir.create("outputs/processed_fastq", recursive = TRUE)
 
+# iterate over every sample in meta_data table to complete QuasR trimming
 for (i in seq_along(meta_data$FileName1)) {
   
   fastqfiles <- c(meta_data$FileName1[i], meta_data$FileName2[i])
@@ -107,3 +104,35 @@ for (i in seq_along(meta_data$FileName1)) {
   meta_data$FileName1[i] <- outfiles[1]
   meta_data$FileName2[i] <- outfiles[2]
 }
+
+
+# ALIGNMENTS
+#create the hisat2_index directory
+dir.create("outputs/hisat2_index", recursive = TRUE)
+
+at_genome <- "data/GCF_000001735.4_TAIR10.1_genomic.fna"
+
+# create tair10_1_index directory
+dir.create("outputs/hisat2_index/tair10_1_index", recursive = TRUE)
+
+#Use system2 to run hisat2 from within R
+tryCatch({
+  system2(command = "hisat2-build", 
+          args = c("-p","8", at_genome, "outputs/hisat2_index/tair10_1_index"),
+          stdout = TRUE, stderr = TRUE)
+}, error = function(e) {
+  paste("hisat2-build", "indexing failed with error:", e$message)
+})
+
+
+# creating outputs folders
+dir.create("outputs/sam_files", recursive = TRUE)
+dir.create("outputs/bam_files", recursive = TRUE)
+
+# gunzip all processed fastq.gz files
+# Gather all 36 processed .gz files
+# processed_files <- list.files(path = "outputs/processed_fastq", pattern = "\\.fastq\\.gz_processed\\.fastq\\gz$", full.names = TRUE)
+# update metadata table
+# meta_data$FileName1 <- list.files(path = "outputs/processed_fastq", pattern = "_1\\.fastq\\.gz_processed\\.fastq$", full.names = TRUE)
+# meta_data$FileName2 <- list.files(path = "outputs/processed_fastq", pattern = "_2\\.fastq\\.gz_processed\\.fastq$", full.names = TRUE)
+# hisat2 -x outputs/hisat2_index/tair10_1_index outputs/processed_fastq/SRR446027_1.fastq.gz_processed.fastq -p 8 -S outputs/sam_files/file1.sam

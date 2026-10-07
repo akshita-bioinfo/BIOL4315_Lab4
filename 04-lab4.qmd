@@ -12,7 +12,9 @@ Quarto enables you to weave together content and executable code into a finished
 
 When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
 
-# code chunk to read metadata table
+# Accessing the RNAseq data and sample data
+
+## code chunk to read metadata table
 
 ```{r}
 meta_data <- read.table(
@@ -20,7 +22,16 @@ meta_data <- read.table(
   header = TRUE)
 ```
 
-# output interactive table
+## code chunk to replace the ./data/ in columns FileName1 and FileName2 with actual path to fastq files
+
+```{r}
+meta_data$FileName1 <- gsub("./data/", fq_path, meta_data$FileName1, fixed = TRUE)
+meta_data$FileName2 <- gsub("./data/", fq_path, meta_data$FileName2, fixed = TRUE)
+# verify
+head(meta_data[, c("FileName1", "FileName2")])
+```
+
+## output metadata table
 
 ```{r}
 library(DT)
@@ -32,3 +43,76 @@ datatable(meta_data,
           ),
           caption = 'Table1: Updated Metadata Table')
 ```
+
+# Read Processing
+
+## Use the Rqc package to generate a QC report
+
+```{r}
+# consider pairs for all 36 files
+all_pairs <- rep(1:18, each = 2)
+# rqc run
+qc_results <- rqc(
+  path = fq_path, 
+  pattern = ".fastq.gz", 
+  pair = all_pairs, 
+  openBrowser = FALSE,
+  outdir = "outputs")
+```
+
+## Generate 3 per-cycle Q-score box plots for files 1-12, 13-24, 25-36
+
+```{r}
+# plot1
+rqcCycleQualityBoxPlot(qc_results[1:12])
+
+# plot2
+rqcCycleQualityBoxPlot(qc_results[13:24])
+
+# plot3
+rqcCycleQualityBoxPlot(qc_results[25:36])
+```
+Yes, there are samples with much longer reads than others. Shortest number of cycles is around 75.
+
+## Generate 3 base call frequency plots for files 1-12, 13-24, 25-36
+
+```{r}
+# plot1
+rqcCycleBaseCallsLinePlot(qc_results[1:12])
+
+# plot2
+rqcCycleBaseCallsLinePlot(qc_results[13:24])
+
+# plot3
+rqcCycleBaseCallsLinePlot(qc_results[25:36])
+```
+N calls sits flat on 0 for almost all samples with only little spike for samples such as SRR446034_1, SRR446034_2, SRR446036_2 and SRR446038_1.
+
+
+# QuasR Trimming
+
+```{r}
+# creating folder
+dir.create("outputs/processed_fastq", recursive = TRUE)
+
+# iterate over every sample in meta_data table to complete QuasR trimming
+for (i in seq_along(meta_data$FileName1)) {
+  
+  fastqfiles <- c(meta_data$FileName1[i], meta_data$FileName2[i])
+  l <- length(stringr::str_split_1(meta_data$FileName1[i], "\\/"))
+  
+  outfiles <- c(paste0("outputs/processed_fastq/", stringr::str_split_1(meta_data$FileName1[i], "\\/")[l], "_processed.fastq.gz"),
+                paste0("outputs/processed_fastq/", stringr::str_split_1(meta_data$FileName2[i], "\\/")[l], "_processed.fastq.gz"))
+  
+  QuasR::preprocessReads(fastqfiles, outfiles,
+                         nBases=1,
+                         truncateEndBases=3,
+                         Lpattern="GCCCGGGTAA",
+                         minLength=40)
+  
+  meta_data$FileName1[i] <- outfiles[1]
+  meta_data$FileName2[i] <- outfiles[2]
+}
+```
+
+# ALIGNMENTS
