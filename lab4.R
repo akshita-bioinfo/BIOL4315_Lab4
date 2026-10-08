@@ -107,15 +107,17 @@ for (i in seq_along(meta_data$FileName1)) {
 
 
 # ALIGNMENTS
+
 #create the hisat2_index directory
 dir.create("outputs/hisat2_index", recursive = TRUE)
 
+# variable to store ref genome
 at_genome <- "data/GCF_000001735.4_TAIR10.1_genomic.fna"
 
 # create tair10_1_index directory
 dir.create("outputs/hisat2_index/tair10_1_index", recursive = TRUE)
 
-#Use system2 to run hisat2 from within R
+#Use system2 to run hisat2 (terminal cmd) from within R
 tryCatch({
   system2(command = "hisat2-build", 
           args = c("-p","8", at_genome, "outputs/hisat2_index/tair10_1_index"),
@@ -136,3 +138,75 @@ dir.create("outputs/bam_files", recursive = TRUE)
 # meta_data$FileName1 <- list.files(path = "outputs/processed_fastq", pattern = "_1\\.fastq\\.gz_processed\\.fastq$", full.names = TRUE)
 # meta_data$FileName2 <- list.files(path = "outputs/processed_fastq", pattern = "_2\\.fastq\\.gz_processed\\.fastq$", full.names = TRUE)
 # hisat2 -x outputs/hisat2_index/tair10_1_index outputs/processed_fastq/SRR446027_1.fastq.gz_processed.fastq -p 8 -S outputs/sam_files/file1.sam
+
+# Aligning the reads
+
+dir.create("outputs/bam_sorted_files", recursive = TRUE)
+dir.create("outputs/bam_indexed_files", recursive = TRUE)
+
+for(i in 1:nrow(meta_data)){
+  
+  # retrieve info for sample i(all 18 samples, we are only considering forward reads)
+  sample_name <- meta_data$SampleName[i]
+  file1 <- meta_data$FileName1[i]
+  
+# hisat2
+hisat2_log <- tryCatch({
+  system2(command = "hisat2", 
+          args = c("-x", "outputs/hisat2_index/tair10_1_index",
+                   "-U", file1,
+                   "-p", "8" ,
+                   "-S",
+                   paste0("outputs/sam_files/", sample_name, ".sam")),
+          stdout = TRUE, stderr = TRUE)
+},error = function (e) {
+  paste("hisat2", "alignment failed with error:", e$message)
+})
+
+# write hisat2 log
+writeLines(hisat2_log, file.path("bam_files",
+                                paste0(sample_name, "_hisat2.log"))
+          )
+
+# samtools
+tryCatch({
+  system2(command = "samtools",
+          args = c("view", "outputs/sam_files",
+                   "-b", # output bam format
+                   "-o",
+                   paste0("outputs/bam_files/", sample_name, ".bam")),
+          stdout = TRUE, stderr = TRUE)
+},error = function (e) {
+  paste("samtools", "bam coversion with error:", e$message)
+})
+
+# samtools
+tryCatch({
+  system2(command = "samtools",
+          args = c(
+            "sort", 
+            "outputs/bam_files/sample_name.bam",
+            "-o",
+          paste0("outputs/bam_sorted_files/", sample_name, ".bam")),
+          stdout = TRUE, stderr = TRUE)
+},error = function (e) {
+  paste("samtools", "sorting with error:", e$message)
+})
+
+# samtools
+tryCatch({
+  system2(command="samtools",
+          args = c("index", 
+                 "outputs/bam_sorted_files/sample_name.bam",
+                 "-o",
+          paste0("outputs/bam_indexed_files/", sample_name, ".bai")),
+          stdout = TRUE, stderr = TRUE)
+},error = function (e) {
+  paste("samtools", "indexing with error:", e$message)
+})
+  
+}
+
+
+
+
