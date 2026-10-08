@@ -134,10 +134,6 @@ dir.create("outputs/bam_files", recursive = TRUE)
 
 # gunzip all processed fastq.gz files
 # Gather all 36 processed .gz files
-# processed_files <- list.files(path = "outputs/processed_fastq", pattern = "\\.fastq\\.gz_processed\\.fastq\\gz$", full.names = TRUE)
-# update metadata table
-# meta_data$FileName1 <- list.files(path = "outputs/processed_fastq", pattern = "_1\\.fastq\\.gz_processed\\.fastq$", full.names = TRUE)
-# meta_data$FileName2 <- list.files(path = "outputs/processed_fastq", pattern = "_2\\.fastq\\.gz_processed\\.fastq$", full.names = TRUE)
 # hisat2 -x outputs/hisat2_index/tair10_1_index outputs/processed_fastq/SRR446027_1.fastq.gz_processed.fastq -p 8 -S outputs/sam_files/file1.sam
 
 
@@ -461,6 +457,16 @@ if(exists("dds2_results")) {
   print(p)
 }
 
+# QUESTION 8: COMPARE HEATMAP VS SPEARMAN CLUSTERING
+
+if(exists("dds2")) {
+  d <- cor(assay(rlog(dds2)), method = "spearman")
+  hc <- hclust(dist(1 - d))
+  
+  plot.phylo(as.phylo(hc), type = "p", edge.col = "blue", edge.width = 2,
+             show.node.label = TRUE, no.margin = TRUE)
+}
+
 # CODE FOR DESCRIPTIVE VARIBALE
 # Connect to Ensembl Plants BioMart and download TAIR gene descriptions  
 m <- biomaRt::useMart("plants_mart",                                     
@@ -474,8 +480,7 @@ desc <- AnnotationDbi::select(org.At.tair.db,
   dplyr::rename(gene_id = TAIR, description = GENENAME) %>%              
   dplyr::distinct(gene_id, .keep_all = TRUE)
 
-# desc <- biomaRt::getBM(attributes = c("tair_locus", "description"), mart 
-                       = m)                                                                       
+# desc <- biomaRt::getBM(attributes = c("tair_locus", "description"), mart = m)                                                                       
 # desc <- desc[!duplicated(desc[, 1]), ]                                   
 # desc <- desc %>% dplyr::rename(gene_id = tair_locus)
 

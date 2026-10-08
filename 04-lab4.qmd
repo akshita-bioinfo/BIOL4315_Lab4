@@ -203,7 +203,7 @@ Using DT package to output align_df as a table
 
 ```{r}
 library(DT)
-datatable(align_df)
+datatable(align_df, caption = "Reads Count Table")
 ```
 
 Using ggplot2 to plot a box plot
@@ -307,6 +307,13 @@ if(exists("dds2_results")) {
   print(p)
 }
 ```
+
+
+## Heatmap vs Spearman clustering
+
+Spearman clustering tells M12 splits off on its own. This can be reflected by different pattern of sharp red bars (highly regulated genes) versus blue bars (downregulated genes)
+Samples with similar color patterns in heat map is comparable to sample clustering in dendrogram (from Spearman clustering). For example: M1B, M1A, A1A, V1B, A1B, V1A are highly clustered together in dendrogram and have about similar high Z score in heatmap.
+
 
 ## Interpreting Enrichment
 
