@@ -3,5 +3,5 @@
 .RData
 .Ruserdata
 data/
-outputs/
+outputs/*
 !outputs/rqc_report.html
