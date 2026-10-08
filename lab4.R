@@ -4,13 +4,14 @@
 library(systemPipeRdata)
 library(DT)
 library(QuasR)
+library(Rsubread)
 
 # Ensure required packages are installed
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
   install.packages("BiocManager")
 }
 
-BiocManager::install(c("clusterProfiler", "EnhancedVolcano", "biomaRt", "org.At.tair.db"))
+BiocManager::install(c("clusterProfiler", "EnhancedVolcano", "biomaRt", "org.At.tair.db", "Rsubread"))
 
 lapply(c(
   "docopt", "DT", "pheatmap", "GenomicFeatures", "DESeq2",
@@ -144,6 +145,18 @@ dir.create("outputs/bam_files", recursive = TRUE)
 dir.create("outputs/bam_sorted_files", recursive = TRUE)
 dir.create("outputs/bam_indexed_files", recursive = TRUE)
 
+processed_files <- list.files(
+  "outputs/processed_fastq",
+  pattern = "_1\\.fastq\\.gz_processed\\.fastq$",
+  full.names = TRUE
+)
+meta_data$FileName1 <- processed_files
+
+# change the metadata paths
+#meta_data$FileName1 <- paste0("outputs/processed_fastq/", sub("\\.fastq\\.gz$","", basename(meta_data$FileName1)), ".fastq")
+#meta_data$FileName2 <- paste0("outputs/processed_fastq/", basename(meta_data$FileName2), "_processed.fastq")
+
+
 # ALIGNING THE READS
 for(i in 1:nrow(meta_data)){
   
@@ -154,7 +167,7 @@ for(i in 1:nrow(meta_data)){
 # HISAT2
 hisat2_log <- tryCatch({
   system2(command = "hisat2", 
-          args = c("-x", "outputs/hisat2_index/tair10_1_index",
+          args = c("-x", "outputs/hisat2_index/tair10_1_index/tair10_1_index",
                    "-U", file1,
                    "-p", "8" ,
                    "-S",
@@ -201,7 +214,7 @@ sort_log <- tryCatch({
 })
 
 # SAMTOOLS: INDEXING SORTED BAM FILES
-index-log <- tryCatch({
+index_log <- tryCatch({
   system2(command="samtools",
           args = c("index", 
                     paste0("outputs/bam_sorted_files/", sample_name, "_sorted.bam"),
@@ -216,5 +229,200 @@ index-log <- tryCatch({
 }
 
 
+# READING ALIGNMENT STATS
+# get the folder
+hisat2_logs_dir <- "outputs/bam_files"
+
+# 1. Get a list of all HISAT2 log files
+log_files <- list.files(hisat2_logs_dir, pattern = "_hisat2\\.log$", full.names = TRUE)
+
+if(length(log_files) > 0) {
+  percent_aligned <- 1:length(log_files)
+  
+  for (i in seq_along(percent_aligned)) {
+    percent_aligned[i] <- readLines(log_files[i])[length(readLines(log_files[i]))]
+  }
+  
+  align_df <- data.frame(samplename = sort(meta_data$SampleName), percent_aligned)
+  align_df <- align_df %>% 
+    mutate(percent_aligned = as.numeric(stringr::str_split_i(align_df$percent_aligned, "%", 1))) 
+  
+  head(align_df)
+} else {
+  print("No HISAT2 log files found yet. Run the alignment step first.")
+}
+
+# using DT package to output align_df as a table
+datatable(align_df)
+
+# Using ggplot2 to plot a box plot
+ggplot(data = align_df, mapping = aes(y = percent_aligned)) + geom_boxplot()
 
 
+# GENERATING COUNT TABLE
+# list bam files
+bfiles <- list.files("outputs/bam_sorted_files", pattern = "_sorted.bam$", full.names = TRUE)
+
+# Counting how many reads correspond to each gene
+gene_count_list <- Rsubread::featureCounts(
+  files = bfiles, 
+  annot.ext = "data/GCF_000001735.4_TAIR10.1_genomic.gtf", 
+  isGTFAnnotationFile = TRUE, 
+  allowMultiOverlap = FALSE,  
+  isPairedEnd = FALSE, nthreads = 8,
+  minMQS = 10, 
+  GTF.featureType = "exon",  
+  GTF.attrType = "gene_id" 
+)
+
+if(exists("gene_count_list")) {
+  glimpse(gene_count_list$counts)[1:5,1:5]
+}
+
+if(exists("gene_count_list")) {
+  glimpse(gene_count_list$annotation)[1:5,]
+}
+
+if(exists("gene_count_list")) {
+  glimpse(gene_count_list$stat)[,1:5]
+}
+
+# Q6 THE COUNT TABLE
+# Assigns $count to a variable named count_table
+count_table <- gene_count_list$count
+head(count_table)
+
+# Removes the _sorted.bam from the column names
+colnames(count_table) <- sub("_sorted\\.bam$", "", colnames(count_table))
+
+# Filter out genes with no reads mapped to them across all samples
+count_table <- count_table[rowSums(count_table) > 0, ]
+head(count_table)
+
+# DT to output the variable as an interactive table
+datatable(count_table)
+
+
+# DATA PREP FOR DESeq2
+if(exists("count_table")) {
+  coldata <- meta_data %>% dplyr::select(SampleName,SampleLong,Factor) %>% 
+    dplyr::mutate(SampleLong=str_split_i(SampleLong, "\\.",1)) %>% 
+    dplyr::rename(condition = SampleLong) %>%
+    dplyr::mutate(condition = factor(condition)) %>% 
+    dplyr::mutate(Factor = factor(Factor)) 
+  
+  base::rownames(coldata) <- coldata$SampleName
+  coldata <- coldata %>% mutate(SampleName = factor(SampleName))
+  coldata$type <- factor(rep("single-read", nrow(coldata)))
+  
+  coldata <- coldata[base::match(base::colnames(count_table), rownames(coldata)),]
+  
+  dds1 <- DESeqDataSetFromMatrix(countData = count_table,
+                                 colData = coldata,
+                                 design = ~ condition)
+  
+  dds2 <- DESeqDataSetFromMatrix(countData = count_table,
+                                 colData = coldata,
+                                 design = ~ Factor)
+}
+
+
+# SAMPLE CORRELATION
+if(exists("dds1")) {
+  d <- cor(assay(rlog(dds1)), method = "spearman")
+  hc <- hclust(dist(1 - d))
+  
+  plot.phylo(as.phylo(hc), type = "p", edge.col = "blue", edge.width = 2,
+             show.node.label = TRUE, no.margin = TRUE)
+}
+
+
+# ANALYZING DIFFERENTIAL GENE EXPRESSION
+if(exists("dds1")) {
+  dds1_results <- DESeq(dds1)
+  dds2_results <- DESeq(dds2)
+  
+  res1 <- DESeq2::results(dds1_results)
+  res2 <- DESeq2::results(dds2_results)
+}
+
+
+# COMPARING VIR, MOCK, AND AVR BROAD OVERVIEW
+if(exists("dds1_results")) {
+  res_vir_mock <- DESeq2::results(dds1_results, contrast = c("condition", "Vir", "Mock"), alpha = 0.2)
+  res_avr_mock <- DESeq2::results(dds1_results, contrast = c("condition", "Avr", "Mock"), alpha = 0.2)
+  res_vir_avr <- DESeq2::results(dds1_results, contrast = c("condition", "Vir", "Avr"), alpha = 0.2)
+  
+  filter_and_count <- function(res_obj, comparison_name, fc_threshold = 2) {
+    res_filtered <- res_obj[!is.na(res_obj$padj) & !is.na(res_obj$log2FoldChange), ]
+    sig_genes <- res_filtered[abs(res_filtered$log2FoldChange) >= log2(fc_threshold), ]
+    up_regulated <- sum(sig_genes$log2FoldChange > 0)
+    down_regulated <- sum(sig_genes$log2FoldChange < 0)
+    
+    return(data.frame(
+      Comparison = comparison_name,
+      Up_regulated = up_regulated,
+      Down_regulated = down_regulated
+    ))
+  }
+  
+  results_summary <- rbind(
+    filter_and_count(res_vir_mock, "Vir vs Mock"),
+    filter_and_count(res_avr_mock, "Avr vs Mock"),
+    filter_and_count(res_vir_avr, "Vir vs Avr")
+  )
+  
+  print(results_summary)
+  
+  plot_data <- results_summary %>%
+    pivot_longer(cols = c(Up_regulated, Down_regulated), 
+                 names_to = "Regulation", 
+                 values_to = "Count") %>%
+    mutate(Regulation = factor(Regulation, levels = c("Up_regulated", "Down_regulated")))
+  
+  p <- ggplot(plot_data, aes(x = Comparison, y = Count, fill = Regulation)) +
+    geom_bar(stat = "identity", position = "stack") +
+    coord_flip() +  
+    labs(
+      title = "Differentially Expressed Genes by Comparison",
+      subtitle = "Fold Change >= 2, alpha = 0.2",
+      x = "Comparison",
+      y = "Number of Genes",
+      fill = "Regulation"
+    ) +
+    theme_minimal() 
+  print(p)
+}
+
+
+# QUESTION 7
+comp <- systemPipeR::readComp(system.file("extdata/param/targetsPE.txt", package="systemPipeRdata"))
+comp[[1]]
+
+
+# ADDING GENE DESCRIPTIONS AND GETTING SPECIFIC WITH VOLACANO PLOTS
+if(exists("res_vir_mock") && exists("desc")) {
+  annotate_results <- function(res_obj, desc_df) {
+    res_df <- as.data.frame(res_obj)
+    res_df$gene_id <- rownames(res_df)
+    res_df <- left_join(res_df, desc_df, by = "gene_id") %>%
+      mutate(description = str_split_i(description,"\\[",1)) 
+    return(res_df)
+  }
+  
+  res_vir_mock_annot <- annotate_results(res_vir_mock, desc)
+  res_avr_mock_annot <- annotate_results(res_avr_mock, desc)
+  res_vir_avr_annot <- annotate_results(res_vir_avr, desc)
+  
+  volcano1 <- EnhancedVolcano(res_vir_mock_annot,
+                              lab = res_vir_mock_annot$description,
+                              x = 'log2FoldChange',
+                              y = 'pvalue',
+                              title = 'Vir vs Mock',
+                              pCutoff = 0.05,           
+                              FCcutoff = 1.0,
+                              pointSize = 4.0,
+                              labSize = 4.0,
+                              drawConnectors = TRUE)
+  print(volcano1)
+}
