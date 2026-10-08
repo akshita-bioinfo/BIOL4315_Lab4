@@ -72,6 +72,7 @@ rqcCycleQualityBoxPlot(qc_results[13:24])
 # plot3
 rqcCycleQualityBoxPlot(qc_results[25:36])
 ```
+
 Yes, there are samples with much longer reads than others. Shortest number of cycles is around 75.
 
 ## Generate 3 base call frequency plots for files 1-12, 13-24, 25-36
@@ -86,10 +87,10 @@ rqcCycleBaseCallsLinePlot(qc_results[13:24])
 # plot3
 rqcCycleBaseCallsLinePlot(qc_results[25:36])
 ```
+
 N calls sits flat on 0 for almost all samples with only little spike for samples such as SRR446034_1, SRR446034_2, SRR446036_2 and SRR446038_1.
 
-
-# QuasR Trimming
+## QuasR Trimming
 
 ```{r}
 # creating folder
@@ -115,6 +116,198 @@ for (i in seq_along(meta_data$FileName1)) {
 }
 ```
 
-# ALIGNMENTS
+## ALIGNMENTS
 
+```{r}
+processed_files <- list.files(
+  "outputs/processed_fastq",
+  pattern = "_1\\.fastq\\.gz_processed\\.fastq$",
+  full.names = TRUE
+)
+meta_data$FileName1 <- processed_files
 
+# ALIGNING THE READS
+for(i in 1:nrow(meta_data)){
+  
+  # retrieve info for sample i(all 18 samples, we are only considering forward reads)
+  sample_name <- meta_data$SampleName[i]
+  file1 <- meta_data$FileName1[i]
+  
+# HISAT2
+hisat2_log <- tryCatch({
+  system2(command = "hisat2", 
+          args = c("-x", "outputs/hisat2_index/tair10_1_index/tair10_1_index",
+                   "-U", file1,
+                   "-p", "8" ,
+                   "-S",
+                   paste0("outputs/sam_files/", sample_name, ".sam")),
+          stdout = TRUE, 
+          stderr = TRUE)
+}, error = function (e) {
+  paste("hisat2", "alignment failed with error:", e$message)
+})
+
+# WRITE HISAT2 LOG
+writeLines(
+  hisat2_log, 
+  file.path("outputs/bam_files",
+  paste0(sample_name, "_hisat2.log")
+  )
+)
+
+# SAMTOOLS: VIEW BAM FILES
+view_log <- tryCatch({
+  system2(command = "samtools",
+          args = c("view", 
+                   paste0("outputs/sam_files/", sample_name, ".sam"),
+                   "-b", # output bam format
+                   "-o",
+                   paste0("outputs/bam_files/", sample_name, ".bam")),
+          stdout = TRUE, 
+          stderr = TRUE)
+}, error = function (e) {
+  paste("samtools", "bam coversion failed with error:", e$message)
+})
+
+# SAMTOOLS: SORT BAM FILES
+sort_log <- tryCatch({
+  system2(command = "samtools",
+          args = c("sort", 
+                   paste0("outputs/bam_files/", sample_name, ".bam"),
+                  "-o",
+                  paste0("outputs/bam_sorted_files/", sample_name, "_sorted.bam")),
+                  stdout = TRUE, 
+                  stderr = TRUE)
+}, error = function (e) {
+  paste("samtools", "sorting failed with error:", e$message)
+})
+
+# SAMTOOLS: INDEXING SORTED BAM FILES
+index_log <- tryCatch({
+  system2(command="samtools",
+          args = c("index", 
+                    paste0("outputs/bam_sorted_files/", sample_name, "_sorted.bam"),
+                    "-o",
+                    paste0("outputs/bam_indexed_files/", sample_name, ".bai")),
+                    stdout = TRUE, 
+                    stderr = TRUE)
+}, error = function (e) {
+  paste("samtools", "indexing failed with error:", e$message)
+})
+}
+```
+
+## Alignment Stats
+
+Using DT package to output align_df as a table
+
+```{r}
+library(DT)
+datatable(align_df)
+```
+
+Using ggplot2 to plot a box plot
+
+```{r}
+library(ggplot2)
+ggplot(data = align_df, mapping = aes(y = percent_aligned)) + geom_boxplot()
+```
+
+## Count Table
+
+Assigns \$count to a variable named count_table
+
+```{r}
+count_table <- gene_count_list$count
+head(count_table)
+```
+
+Removes the \_sorted.bam from the column names
+
+```{r}
+colnames(count_table) <- sub("_sorted\\.bam$", "", colnames(count_table))
+```
+
+Filter out genes with no reads mapped to them across all samples
+
+```{r}
+count_table <- count_table[rowSums(count_table) > 0, ]
+head(count_table)
+```
+
+## Analyzing Differential gene expression (DGE) with DESeq2
+
+DGE analysis on the comp pairs (using dds2 variable)
+
+```{r}
+# loading required libraries
+library(DESeq2)
+
+# get the comp pairs
+comp <- systemPipeR::readComp(system.file("extdata/param/targetsPE.txt", package="systemPipeRdata"))
+comp[[1]]
+
+# DGE analysis
+if(exists("dds2_results")) {
+  res_M1_A1 <- DESeq2::results(dds2_results, contrast = c("Factor", "M1", "A1"), alpha = 0.2)
+  res_M1_V1 <- DESeq2::results(dds2_results, contrast = c("Factor", "M1", "V1"), alpha = 0.2)
+  res_A1_V1 <- DESeq2::results(dds2_results, contrast = c("Factor", "A1", "V1"), alpha = 0.2)
+  res_M6_A6 <- DESeq2::results(dds2_results, contrast = c("Factor", "M6", "A6"), alpha = 0.2)
+  res_M6_V6 <- DESeq2::results(dds2_results, contrast = c("Factor", "M6", "V6"), alpha = 0.2)
+  res_A6_V6 <- DESeq2::results(dds2_results, contrast = c("Factor", "A6", "V6"), alpha = 0.2)
+  res_M12_A12 <- DESeq2::results(dds2_results, contrast = c("Factor", "M12", "A12"), alpha = 0.2)
+  res_M12_V12 <- DESeq2::results(dds2_results, contrast = c("Factor", "M12", "V12"), alpha = 0.2)
+  res_A12_V12 <- DESeq2::results(dds2_results, contrast = c("Factor", "A12", "V12"), alpha = 0.2)
+  
+  filter_and_count <- function(res_obj, comparison_name, fc_threshold = 2) {
+    res_filtered <- res_obj[!is.na(res_obj$padj) & !is.na(res_obj$log2FoldChange), ]
+    sig_genes <- res_filtered[abs(res_filtered$log2FoldChange) >= log2(fc_threshold), ]
+    up_regulated <- sum(sig_genes$log2FoldChange > 0)
+    down_regulated <- sum(sig_genes$log2FoldChange < 0)
+    
+    return(data.frame(
+      Comparison = comparison_name,
+      Up_regulated = up_regulated,
+      Down_regulated = down_regulated
+    ))
+  }
+  
+  results_summary <- rbind(
+    filter_and_count(res_M1_A1, "M1 VS A1"),
+    filter_and_count(res_M1_V1, "M1 VS V1"),
+    filter_and_count(res_A1_V1, "A1 VS V1"),
+    filter_and_count(res_M6_A6, "M6 VS A6"),
+    filter_and_count(res_M6_V6, "M6 VS V6"),
+    filter_and_count(res_A6_V6, "A6 VS V6"),
+    filter_and_count(res_M12_A12, "M12 VS A12"),
+    filter_and_count(res_M12_V12, "M12 VS V12"),
+    filter_and_count(res_A12_V12, "A12 VS V12")
+   
+  )
+  
+  print(results_summary)
+  
+  plot_data <- results_summary %>%
+    pivot_longer(cols = c(Up_regulated, Down_regulated), 
+                 names_to = "Regulation", 
+                 values_to = "Count") %>%
+    mutate(Regulation = factor(Regulation, levels = c("Up_regulated", "Down_regulated")))
+  
+  p <- ggplot(plot_data, aes(x = Comparison, y = Count, fill = Regulation)) +
+    geom_bar(stat = "identity", position = "stack") +
+    coord_flip() +  
+    labs(
+      title = "Differentially Expressed Genes by Comparison",
+      subtitle = "Fold Change >= 2, alpha = 0.2",
+      x = "Comparison",
+      y = "Number of Genes",
+      fill = "Regulation"
+    ) +
+    theme_minimal() 
+  print(p)
+}
+```
+
+## Interpreting Enrichment
+
+Avirulent response plot suggests activation of plant defense mechanisms or immune response against pathogens (like fungus and filamentous mold). Terms related to defense and stress mechanisms in plants: Regulation of defense response and Regulation of response to stress. response to oomycetes and response to fungus explains that plant is under active pathogen attack. Also, regulation of defense response and regulation of response to stress means plant is actively responding to pathogen attack.

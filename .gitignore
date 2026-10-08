@@ -4,3 +4,4 @@
 .Ruserdata
 data/
 outputs/
+!outputs/rqc_report.html

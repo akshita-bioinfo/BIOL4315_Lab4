@@ -252,6 +252,7 @@ if(length(log_files) > 0) {
   print("No HISAT2 log files found yet. Run the alignment step first.")
 }
 
+# Q5: ALIGNMENT STATS
 # using DT package to output align_df as a table
 datatable(align_df)
 
@@ -327,7 +328,7 @@ if(exists("count_table")) {
 }
 
 
-# SAMPLE CORRELATION
+# SAMPLE CORRELATION (for dds1)
 if(exists("dds1")) {
   d <- cor(assay(rlog(dds1)), method = "spearman")
   hc <- hclust(dist(1 - d))
@@ -396,9 +397,87 @@ if(exists("dds1_results")) {
 
 
 # QUESTION 7
+# get the comp pairs
 comp <- systemPipeR::readComp(system.file("extdata/param/targetsPE.txt", package="systemPipeRdata"))
 comp[[1]]
 
+# DGE analysis
+if(exists("dds2_results")) {
+  res_M1_A1 <- DESeq2::results(dds2_results, contrast = c("Factor", "M1", "A1"), alpha = 0.2)
+  res_M1_V1 <- DESeq2::results(dds2_results, contrast = c("Factor", "M1", "V1"), alpha = 0.2)
+  res_A1_V1 <- DESeq2::results(dds2_results, contrast = c("Factor", "A1", "V1"), alpha = 0.2)
+  res_M6_A6 <- DESeq2::results(dds2_results, contrast = c("Factor", "M6", "A6"), alpha = 0.2)
+  res_M6_V6 <- DESeq2::results(dds2_results, contrast = c("Factor", "M6", "V6"), alpha = 0.2)
+  res_A6_V6 <- DESeq2::results(dds2_results, contrast = c("Factor", "A6", "V6"), alpha = 0.2)
+  res_M12_A12 <- DESeq2::results(dds2_results, contrast = c("Factor", "M12", "A12"), alpha = 0.2)
+  res_M12_V12 <- DESeq2::results(dds2_results, contrast = c("Factor", "M12", "V12"), alpha = 0.2)
+  res_A12_V12 <- DESeq2::results(dds2_results, contrast = c("Factor", "A12", "V12"), alpha = 0.2)
+  
+  filter_and_count <- function(res_obj, comparison_name, fc_threshold = 2) {
+    res_filtered <- res_obj[!is.na(res_obj$padj) & !is.na(res_obj$log2FoldChange), ]
+    sig_genes <- res_filtered[abs(res_filtered$log2FoldChange) >= log2(fc_threshold), ]
+    up_regulated <- sum(sig_genes$log2FoldChange > 0)
+    down_regulated <- sum(sig_genes$log2FoldChange < 0)
+    
+    return(data.frame(
+      Comparison = comparison_name,
+      Up_regulated = up_regulated,
+      Down_regulated = down_regulated
+    ))
+  }
+  
+  results_summary <- rbind(
+    filter_and_count(res_M1_A1, "M1 VS A1"),
+    filter_and_count(res_M1_V1, "M1 VS V1"),
+    filter_and_count(res_A1_V1, "A1 VS V1"),
+    filter_and_count(res_M6_A6, "M6 VS A6"),
+    filter_and_count(res_M6_V6, "M6 VS V6"),
+    filter_and_count(res_A6_V6, "A6 VS V6"),
+    filter_and_count(res_M12_A12, "M12 VS A12"),
+    filter_and_count(res_M12_V12, "M12 VS V12"),
+    filter_and_count(res_A12_V12, "A12 VS V12")
+   
+  )
+  
+  print(results_summary)
+  
+  plot_data <- results_summary %>%
+    pivot_longer(cols = c(Up_regulated, Down_regulated), 
+                 names_to = "Regulation", 
+                 values_to = "Count") %>%
+    mutate(Regulation = factor(Regulation, levels = c("Up_regulated", "Down_regulated")))
+  
+  p <- ggplot(plot_data, aes(x = Comparison, y = Count, fill = Regulation)) +
+    geom_bar(stat = "identity", position = "stack") +
+    coord_flip() +  
+    labs(
+      title = "Differentially Expressed Genes by Comparison",
+      subtitle = "Fold Change >= 2, alpha = 0.2",
+      x = "Comparison",
+      y = "Number of Genes",
+      fill = "Regulation"
+    ) +
+    theme_minimal() 
+  print(p)
+}
+
+# CODE FOR DESCRIPTIVE VARIBALE
+# Connect to Ensembl Plants BioMart and download TAIR gene descriptions  
+m <- biomaRt::useMart("plants_mart",                                     
+                      dataset = "athaliana_eg_gene",                     
+                      host = "https://plants.ensembl.org")               
+
+desc <- AnnotationDbi::select(org.At.tair.db,                            
+                              keys = rownames(res_vir_mock),             
+                              columns = c("GENENAME"),                   
+                              keytype = "TAIR") %>%                      
+  dplyr::rename(gene_id = TAIR, description = GENENAME) %>%              
+  dplyr::distinct(gene_id, .keep_all = TRUE)
+
+# desc <- biomaRt::getBM(attributes = c("tair_locus", "description"), mart 
+                       = m)                                                                       
+# desc <- desc[!duplicated(desc[, 1]), ]                                   
+# desc <- desc %>% dplyr::rename(gene_id = tair_locus)
 
 # ADDING GENE DESCRIPTIONS AND GETTING SPECIFIC WITH VOLACANO PLOTS
 if(exists("res_vir_mock") && exists("desc")) {
@@ -426,3 +505,25 @@ if(exists("res_vir_mock") && exists("desc")) {
                               drawConnectors = TRUE)
   print(volcano1)
 }
+
+
+# GENE ONTOLOGY (GO) Enrichment
+# Select significant UP-regulated genes from Avirulent vs Mock
+# Because we are working with a downsampled toy dataset, we use a relaxed pvalue cutoff
+sig_avr_up <- res_avr_mock %>%
+  as.data.frame() %>%
+  dplyr::filter(pvalue < 0.05 & log2FoldChange > 1) %>%
+  rownames()
+
+# Run the enrichment using TAIR IDs
+ego_avr <- enrichGO(gene          = sig_avr_up,
+                    OrgDb         = org.At.tair.db,
+                    keyType       = "TAIR",
+                    ont           = "BP", # Biological Process
+                    pAdjustMethod = "none",
+                    pvalueCutoff  = 0.05,
+                    qvalueCutoff  = 0.2)
+
+# Visualize with a dotplot
+enrichplot::dotplot(ego_avr, showCategory=20) + 
+  ggplot2::ggtitle("GO Enrichment: Avirulent Response (Up-regulated)")
