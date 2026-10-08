@@ -139,18 +139,19 @@ dir.create("outputs/bam_files", recursive = TRUE)
 # meta_data$FileName2 <- list.files(path = "outputs/processed_fastq", pattern = "_2\\.fastq\\.gz_processed\\.fastq$", full.names = TRUE)
 # hisat2 -x outputs/hisat2_index/tair10_1_index outputs/processed_fastq/SRR446027_1.fastq.gz_processed.fastq -p 8 -S outputs/sam_files/file1.sam
 
-# Aligning the reads
 
+# creating req directories
 dir.create("outputs/bam_sorted_files", recursive = TRUE)
 dir.create("outputs/bam_indexed_files", recursive = TRUE)
 
+# ALIGNING THE READS
 for(i in 1:nrow(meta_data)){
   
   # retrieve info for sample i(all 18 samples, we are only considering forward reads)
   sample_name <- meta_data$SampleName[i]
   file1 <- meta_data$FileName1[i]
   
-# hisat2
+# HISAT2
 hisat2_log <- tryCatch({
   system2(command = "hisat2", 
           args = c("-x", "outputs/hisat2_index/tair10_1_index",
@@ -158,53 +159,60 @@ hisat2_log <- tryCatch({
                    "-p", "8" ,
                    "-S",
                    paste0("outputs/sam_files/", sample_name, ".sam")),
-          stdout = TRUE, stderr = TRUE)
-},error = function (e) {
+          stdout = TRUE, 
+          stderr = TRUE)
+}, error = function (e) {
   paste("hisat2", "alignment failed with error:", e$message)
 })
 
-# write hisat2 log
-writeLines(hisat2_log, file.path("bam_files",
-                                paste0(sample_name, "_hisat2.log"))
-          )
+# WRITE HISAT2 LOG
+writeLines(
+  hisat2_log, 
+  file.path("outputs/bam_files",
+  paste0(sample_name, "_hisat2.log")
+  )
+)
 
-# samtools
-tryCatch({
+# SAMTOOLS: VIEW BAM FILES
+view_log <- tryCatch({
   system2(command = "samtools",
-          args = c("view", "outputs/sam_files",
+          args = c("view", 
+                   paste0("outputs/sam_files/", sample_name, ".sam"),
                    "-b", # output bam format
                    "-o",
                    paste0("outputs/bam_files/", sample_name, ".bam")),
-          stdout = TRUE, stderr = TRUE)
-},error = function (e) {
-  paste("samtools", "bam coversion with error:", e$message)
+          stdout = TRUE, 
+          stderr = TRUE)
+}, error = function (e) {
+  paste("samtools", "bam coversion failed with error:", e$message)
 })
 
-# samtools
-tryCatch({
+# SAMTOOLS: SORT BAM FILES
+sort_log <- tryCatch({
   system2(command = "samtools",
-          args = c(
-            "sort", 
-            "outputs/bam_files/sample_name.bam",
-            "-o",
-          paste0("outputs/bam_sorted_files/", sample_name, ".bam")),
-          stdout = TRUE, stderr = TRUE)
-},error = function (e) {
-  paste("samtools", "sorting with error:", e$message)
+          args = c("sort", 
+                   paste0("outputs/bam_files/", sample_name, ".bam"),
+                  "-o",
+                  paste0("outputs/bam_sorted_files/", sample_name, "_sorted.bam")),
+                  stdout = TRUE, 
+                  stderr = TRUE)
+}, error = function (e) {
+  paste("samtools", "sorting failed with error:", e$message)
 })
 
-# samtools
-tryCatch({
+# SAMTOOLS: INDEXING SORTED BAM FILES
+index-log <- tryCatch({
   system2(command="samtools",
           args = c("index", 
-                 "outputs/bam_sorted_files/sample_name.bam",
-                 "-o",
-          paste0("outputs/bam_indexed_files/", sample_name, ".bai")),
-          stdout = TRUE, stderr = TRUE)
-},error = function (e) {
-  paste("samtools", "indexing with error:", e$message)
+                    paste0("outputs/bam_sorted_files/", sample_name, "_sorted.bam"),
+                    "-o",
+                    paste0("outputs/bam_indexed_files/", sample_name, ".bai")),
+                    stdout = TRUE, 
+                    stderr = TRUE)
+}, error = function (e) {
+  paste("samtools", "indexing failed with error:", e$message)
 })
-  
+ 
 }
 
 
